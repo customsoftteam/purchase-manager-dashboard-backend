@@ -388,6 +388,7 @@ exports.addVendorComponent = async (req, res) => {
           cgst: parseFloat(cgst) || 0,
           sgst: parseFloat(sgst) || 0,
           lead_time_days: parseInt(delivery_terms) || 0,
+          status: 'pending',
           is_active: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -442,98 +443,6 @@ exports.deleteVendorComponent = async (req, res) => {
   } catch (error) {
     console.error('Error deleting component:', error);
     res.status(500).json({ error: error.message || 'Failed to delete component' });
-  }
-};
-
-// Update vendor component
-exports.updateVendorComponent = async (req, res) => {
-  try {
-    const { componentId } = req.params;
-    const vendorId = req.user.vendor_id;
-    const {
-      component_name: title,
-      description,
-      item_no,
-      unit_of_measurement,
-      specifications,
-      minor_details,
-      price_per_unit: base_price,
-      stock_available,
-      color,
-      discount_percent,
-      cgst,
-      sgst,
-      lead_time_days: delivery_terms,
-      delivery_time_range,
-      minimum_order_quantity,
-      hsn_code,
-      img,
-      size,
-      component_code,
-    } = req.body;
-
-    if (!vendorId) {
-      return res.status(400).json({ error: 'Vendor ID is required' });
-    }
-
-    // Verify component belongs to this vendor
-    const { data: component, error: componentError } = await supabase
-      .from('vendor_components')
-      .select('componentid')
-      .eq('componentid', componentId)
-      .eq('vendorid', vendorId)
-      .single();
-
-    if (componentError || !component) {
-      return res.status(404).json({ error: 'Component not found or unauthorized' });
-    }
-
-    const resolvedMeasurementUnit = unit_of_measurement || null;
-    const resolvedStockAvailable = stock_available ?? 0;
-    const resolvedSize = size === '' ? null : size;
-
-    // Update component
-    const updatePayload = {
-      component_name: title,
-      description,
-      item_no,
-      unit_of_measurement: resolvedMeasurementUnit,
-      color: color || null,
-      specifications: specifications || null,
-      minor_details: minor_details || null,
-      hsn_code: hsn_code || null,
-      img: img || null,
-      size: resolvedSize,
-      price_per_unit: parseFloat(base_price) || 0,
-      stock_available: parseInt(resolvedStockAvailable) || 0,
-      minimum_order_quantity: parseInt(minimum_order_quantity) || 1,
-      discount_percent: parseFloat(discount_percent) || 0,
-      cgst: parseFloat(cgst) || 0,
-      sgst: parseFloat(sgst) || 0,
-      lead_time_days: parseInt(delivery_terms) || 0,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (component_code !== undefined) {
-      updatePayload.component_code = component_code || null;
-    }
-
-    const { data: updatedComponent, error: updateError } = await supabase
-      .from('vendor_components')
-      .update(updatePayload)
-      .eq('componentid', componentId)
-      .select()
-      .single();
-
-    if (updateError) throw updateError;
-
-    res.json({
-      message: 'Component updated successfully',
-      product: updatedComponent,
-    });
-  } catch (error) {
-    console.error('Error updating component:', error);
-    res.status(500).json({ error: error.message || 'Failed to update component' });
   }
 };
 
@@ -961,13 +870,19 @@ exports.updateVendorComponent = async (req, res) => {
     const size = pick('size');
     if (size !== undefined) updates.size = size === '' ? null : size;
 
+    const minorDetails = pick('minor_details', 'minorDetails');
+    if (minorDetails !== undefined) updates.minor_details = minorDetails;
+
     const img = pick('img', 'image', 'image_url');
     if (img !== undefined) updates.img = img;
 
     const componentCode = pick('component_code', 'componentCode');
     if (componentCode !== undefined) updates.component_code = componentCode;
 
-    // 4️⃣ Auto resubmission logic
+    // 4️⃣ Mark component as active on update
+    updates.is_active = true;
+
+    // 5️⃣ Auto resubmission logic
     let resubmitted = false;
     if (currentComponent.status === "rejected") {
       updates.status = "pending";
@@ -975,7 +890,7 @@ exports.updateVendorComponent = async (req, res) => {
       resubmitted = true;
     }
 
-    // 5️⃣ Update with vendor scope (important)
+    // 6️⃣ Update with vendor scope (important)
     const { data: updatedComponent, error: updateError } = await supabase
       .from("vendor_components")
       .update(updates)
